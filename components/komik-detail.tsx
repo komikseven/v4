@@ -2,45 +2,64 @@
 
 import useSWR from "swr"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
-  getSeriesBySlug,
+  getChapter,
+  getSeries,
   getChaptersByCategory,
   getSeriesGenres,
   type Chapter,
+  type Series,
   formatDate,
   proxyImage,
 } from "@/lib/api"
 import { useFavorites } from "@/lib/storage"
 import { ErrorState } from "@/components/states"
-import { ChevronRight, Clock, BookOpen, Heart, Star, Tag } from "lucide-react"
+import {
+  Heart,
+  ChevronRight,
+  Clock,
+  BookOpen,
+  Star,
+  Tag,
+} from "lucide-react"
 
-export function SeriesDetail({ slug }: { slug: string }) {
+/** Load from a chapter ID, resolve the series, then show full detail. */
+export function ComikDetail({ chapterId }: { chapterId: number }) {
+  const router = useRouter()
+
+  // 1️⃣ Fetch the chapter to get seriesId / categoryId
+  const { data: chapter, error: chapterError } = useSWR(
+    ["chapter", chapterId],
+    () => getChapter(chapterId),
+    { revalidateOnFocus: false },
+  )
+
+  const seriesId = chapter?.categoryId ?? chapter?.seriesId ?? 0
+
+  // 2️⃣ Fetch the series info
   const { data: series, error: seriesError } = useSWR(
-    ["series-slug", slug],
-    () => getSeriesBySlug(slug),
+    seriesId ? ["series", seriesId] : null,
+    () => getSeries(seriesId),
     { revalidateOnFocus: false },
   )
 
-  const {
-    data: chapters,
-    error: chaptersError,
-    isLoading,
-    mutate,
-  } = useSWR(
-    series ? ["chapters", series.id] : null,
-    () => getChaptersByCategory(series!.id, 100),
+  // 3️⃣ Fetch chapter list for this series
+  const { data: chapters, error: chaptersError, isLoading } = useSWR(
+    seriesId ? ["chapters", seriesId] : null,
+    () => getChaptersByCategory(seriesId, 100),
     { revalidateOnFocus: false },
   )
 
-  // Fetch genres via tags
+  // 4️⃣ Fetch genres
   const { data: genres } = useSWR(
-    series ? ["series-genres", series.id] : null,
-    () => getSeriesGenres(series!.id),
+    seriesId ? ["series-genres", seriesId] : null,
+    () => getSeriesGenres(seriesId),
     { revalidateOnFocus: false, revalidateIfStale: false },
   )
 
   const list: Chapter[] = chapters ?? []
-  const thumbnail = series?.thumbnail || list[0]?.thumbnail
+  const thumbnail = series?.thumbnail || list[0]?.thumbnail || chapter?.thumbnail
 
   // Favorites
   const { isFavorite, toggleFavorite, ready: favReady } = useFavorites()
@@ -58,7 +77,18 @@ export function SeriesDetail({ slug }: { slug: string }) {
     })
   }
 
-  const error = seriesError || chaptersError
+  const error = chapterError || seriesError || chaptersError
+
+  if (error && !series && !chapter) {
+    return (
+      <ErrorState
+        message={(error as Error).message || "Gagal memuat detail komik"}
+        onRetry={() => router.refresh()}
+      />
+    )
+  }
+
+  const isLoadingSeries = !chapter || !series
 
   return (
     <section className="space-y-5">
@@ -66,17 +96,15 @@ export function SeriesDetail({ slug }: { slug: string }) {
       <nav className="flex items-center gap-1 text-xs text-muted-foreground">
         <Link href="/" className="hover:text-primary">Beranda</Link>
         <ChevronRight className="h-3 w-3" />
-        <Link href="/series" className="hover:text-primary">Komik</Link>
-        <ChevronRight className="h-3 w-3" />
-        <span className="truncate text-foreground">{series?.name ?? "..."}</span>
+        <span className="truncate text-foreground">{series?.name ?? "Detail Komik"}</span>
       </nav>
 
       {/* ── Hero Card ─────────────────────────────── */}
-      {!series ? (
+      {isLoadingSeries ? (
         <HeroSkeleton />
       ) : (
         <div className="rounded-2xl border border-border bg-card overflow-hidden">
-          {/* Banner blur background */}
+          {/* Banner background blur */}
           <div className="relative h-36 overflow-hidden">
             {thumbnail && (
               <img
@@ -87,7 +115,7 @@ export function SeriesDetail({ slug }: { slug: string }) {
               />
             )}
             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-card/95" />
-            {/* Bug report pill */}
+            {/* Report bug pill */}
             <div className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-black/40 px-3 py-1.5 text-xs text-white backdrop-blur-sm">
               <span>🐛</span>
               <span className="font-medium">Lapor Bug dan Saran</span>
@@ -98,12 +126,12 @@ export function SeriesDetail({ slug }: { slug: string }) {
           <div className="relative px-4 pb-5">
             {/* Cover + title row */}
             <div className="flex gap-4 -mt-16">
-              {/* Cover */}
+              {/* Cover image */}
               <div className="relative h-32 w-24 shrink-0 overflow-hidden rounded-xl border-2 border-card shadow-lg bg-muted">
                 {thumbnail ? (
                   <img
                     src={proxyImage(thumbnail)}
-                    alt={series.name}
+                    alt={series?.name}
                     crossOrigin="anonymous"
                     className="h-full w-full object-cover"
                   />
@@ -112,12 +140,11 @@ export function SeriesDetail({ slug }: { slug: string }) {
                 )}
               </div>
 
-              {/* Title + genres */}
+              {/* Title + genre badges */}
               <div className="flex flex-1 flex-col justify-end gap-1.5 min-w-0 pt-4">
                 <h1 className="text-balance text-base font-bold leading-snug text-foreground md:text-xl line-clamp-2">
-                  {series.name}
+                  {series?.name ?? "Memuat..."}
                 </h1>
-                {/* Genre badges */}
                 <div className="flex flex-wrap gap-1">
                   {genres && genres.length > 0 ? (
                     genres.slice(0, 4).map((g) => (
@@ -130,14 +157,12 @@ export function SeriesDetail({ slug }: { slug: string }) {
                       </Link>
                     ))
                   ) : (
-                    <span className="rounded-full bg-secondary px-2.5 py-0.5 text-[11px] font-medium text-secondary-foreground">
-                      Manga
-                    </span>
+                    <span className="rounded-full bg-secondary px-2.5 py-0.5 text-[11px] font-medium text-secondary-foreground">Manga</span>
                   )}
                 </div>
               </div>
 
-              {/* Love / Favorite button */}
+              {/* Favorite / Love button */}
               <button
                 type="button"
                 onClick={onToggleFav}
@@ -161,7 +186,7 @@ export function SeriesDetail({ slug }: { slug: string }) {
               {[
                 { icon: <Star className="h-4 w-4 text-yellow-400" />, label: "Rating", value: "7.00" },
                 { icon: <Clock className="h-4 w-4 text-primary" />, label: "Status", value: "Ongoing" },
-                { icon: <BookOpen className="h-4 w-4 text-muted-foreground" />, label: "Chapter", value: `${series.count || list.length}` },
+                { icon: <BookOpen className="h-4 w-4 text-muted-foreground" />, label: "Chapter", value: `${series?.count ?? list.length}` },
               ].map((s) => (
                 <div key={s.label} className="flex flex-col items-center gap-1 rounded-xl bg-muted/60 py-3 px-2 text-center border border-border">
                   {s.icon}
@@ -172,7 +197,7 @@ export function SeriesDetail({ slug }: { slug: string }) {
             </div>
 
             {/* Sinopsis */}
-            {series.description && (
+            {series?.description && (
               <div className="mt-4">
                 <div className="flex items-center gap-1.5 mb-2">
                   <Tag className="h-3.5 w-3.5 text-primary" />
@@ -184,7 +209,7 @@ export function SeriesDetail({ slug }: { slug: string }) {
               </div>
             )}
 
-            {/* All genres list */}
+            {/* All genres */}
             {genres && genres.length > 0 && (
               <div className="mt-4">
                 <div className="flex items-center gap-1.5 mb-2">
@@ -206,7 +231,7 @@ export function SeriesDetail({ slug }: { slug: string }) {
             )}
 
             {/* Read button */}
-            {!isLoading && list.length > 0 && (
+            {list.length > 0 && (
               <Link
                 href={`/baca/${list[list.length - 1]?.id}`}
                 className="btn-primary mt-5 flex w-full items-center justify-center gap-2 py-3 text-sm rounded-xl"
@@ -225,12 +250,10 @@ export function SeriesDetail({ slug }: { slug: string }) {
 
         {isLoading || !series ? (
           <div className="space-y-2">
-            {Array.from({ length: 12 }).map((_, i) => (
+            {Array.from({ length: 10 }).map((_, i) => (
               <div key={i} className="h-14 skeleton rounded-xl" />
             ))}
           </div>
-        ) : error ? (
-          <ErrorState message={(error as Error).message} onRetry={() => mutate()} />
         ) : list.length === 0 ? (
           <p className="rounded-xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">
             Belum ada chapter.
@@ -238,24 +261,36 @@ export function SeriesDetail({ slug }: { slug: string }) {
         ) : (
           <div className="space-y-2">
             {list.map((c) => (
-              <Link
-                key={c.id}
-                href={`/baca/${c.id}`}
-                className="group flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3.5 transition hover:border-primary/40 hover:shadow-sm"
-              >
-                <span className="font-medium text-sm text-foreground group-hover:text-primary">
-                  Chapter {c.chapterNumber || "?"}
-                </span>
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
-                  <Clock className="h-3.5 w-3.5" />
-                  {formatDate(c.date)}
-                </span>
-              </Link>
+              <ChapterRow key={c.id} chapter={c} isActive={c.id === chapterId} />
             ))}
           </div>
         )}
       </div>
     </section>
+  )
+}
+
+function ChapterRow({ chapter, isActive }: { chapter: Chapter; isActive: boolean }) {
+  return (
+    <Link
+      href={`/baca/${chapter.id}`}
+      className={`group flex items-center justify-between gap-3 rounded-xl border px-4 py-3.5 transition-all hover:shadow-sm ${
+        isActive
+          ? "border-primary/50 bg-primary/5 shadow-sm"
+          : "border-border bg-card hover:border-primary/40"
+      }`}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        {isActive && <span className="h-2 w-2 rounded-full bg-primary shrink-0" />}
+        <span className={`font-medium text-sm ${isActive ? "text-primary" : "text-foreground group-hover:text-primary"}`}>
+          Chapter {chapter.chapterNumber || "?"}
+        </span>
+      </div>
+      <span className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
+        <Clock className="h-3.5 w-3.5" />
+        {formatDate(chapter.date)}
+      </span>
+    </Link>
   )
 }
 
@@ -276,6 +311,7 @@ function HeroSkeleton() {
           {[1, 2, 3].map((i) => <div key={i} className="skeleton h-16 rounded-xl" />)}
         </div>
         <div className="mt-4 skeleton h-20 rounded-xl" />
+        <div className="mt-4 skeleton h-12 rounded-xl" />
       </div>
     </div>
   )

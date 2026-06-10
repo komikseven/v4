@@ -11,7 +11,7 @@ function ChapterRow({ chapter }: { chapter: Chapter }) {
   const title = chapter.seriesTitle || chapter.title
   return (
     <Link
-      href={`/baca/${chapter.id}`}
+      href={`/detail/${chapter.id}`}
       className="group flex items-center gap-3 rounded-lg border border-border bg-card p-2.5 transition hover:border-primary/40 hover:shadow-sm"
     >
       <div className="relative h-16 w-12 shrink-0 overflow-hidden rounded-md bg-muted">

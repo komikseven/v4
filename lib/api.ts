@@ -7,6 +7,7 @@ export interface Series {
   count: number
   description?: string
   thumbnail?: string
+  genres?: Genre[]
 }
 
 export interface Chapter {
@@ -114,12 +115,20 @@ export function parseChapter(raw: RawPost): Chapter {
 export function parseSeries(raw: RawCategory): Series {
   const desc = raw.description ?? ""
   const cover = parseCover(desc)
+  // Sinopsis: strip the cover URL/img from description, then strip all HTML
+  let sinopsis = desc
+  if (sinopsis.startsWith("http")) {
+    // first word is the URL, rest might be description
+    sinopsis = sinopsis.replace(/^https?:\/\/\S+\s*/, "")
+  }
+  sinopsis = decodeHtml(sinopsis.replace(/<[^>]+>/g, "").trim())
+
   return {
     id: raw.id,
     name: decodeHtml((raw.name ?? "").replace(/^Komik\s+/i, "")),
     slug: raw.slug ?? "",
     count: raw.count ?? 0,
-    description: desc ? decodeHtml(desc.replace(/<[^>]+>/g, "").trim()) : undefined,
+    description: sinopsis || undefined,
     thumbnail: cover !== "/manga-placeholder.png" ? cover : undefined,
   }
 }
@@ -331,3 +340,25 @@ export async function getSeriesByType(type: string, page = 1, perPage = 24) {
   const series = (data as RawCategory[]).map(parseSeries)
   return { series, totalPages }
 }
+
+// Fetch genre tags for a specific post (to get series genres)
+export async function getSeriesGenres(categoryId: number): Promise<Genre[]> {
+  try {
+    // Get most recent post in this category, then fetch its tags
+    const postsUrl = `${API_BASE}/posts?categories=${categoryId}&per_page=1&orderby=date&order=desc&_fields=id,tags`
+    const postsRes = await fetch(postsUrl, { headers: { Accept: "application/json" }, next: { revalidate: 3600 } })
+    if (!postsRes.ok) return []
+    const posts = await postsRes.json() as Array<{ id: number; tags?: number[] }>
+    if (!posts.length || !posts[0].tags?.length) return []
+
+    const tagIds = posts[0].tags!.slice(0, 10).join(",")
+    const tagsUrl = `${API_BASE}/tags?include=${tagIds}&per_page=10`
+    const tagsRes = await fetch(tagsUrl, { headers: { Accept: "application/json" }, next: { revalidate: 3600 } })
+    if (!tagsRes.ok) return []
+    const tags = await tagsRes.json() as Array<{ id: number; name: string; slug: string; count: number }>
+    return tags.map(t => ({ id: t.id, name: decodeHtml(t.name), slug: t.slug, count: t.count }))
+  } catch {
+    return []
+  }
+}
+

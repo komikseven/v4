@@ -4,8 +4,8 @@ import { timeAgo, proxyImage } from "@/lib/api"
 
 export function ChapterCard({ chapter }: { chapter: Chapter }) {
   const title = chapter.seriesTitle || chapter.title
-  // Redirects server-side to /komik/[slug] via app/series/[id]/page.tsx
-  const href = `/series/${chapter.categoryId}`
+  // Goes to detail komik page first
+  const href = `/detail/${chapter.id}`
 
   return (
     <Link
